@@ -133,9 +133,11 @@ func (pq *persistentQueue[T]) initPersistentContiguousStorage(ctx context.Contex
 	if err == nil {
 		pq.readIndex, err = bytesToItemIndex(riOp.Value)
 	}
-
 	if err == nil {
 		pq.writeIndex, err = bytesToItemIndex(wiOp.Value)
+	}
+	if err == nil {
+		pq.logger.Debug("Initialized persistent queue", zap.Uint64("read_index", pq.readIndex), zap.Uint64("write_index", pq.writeIndex))
 	}
 
 	if err != nil {
@@ -168,6 +170,7 @@ func (pq *persistentQueue[T]) initPersistentContiguousStorage(ctx context.Contex
 			var restoredQueueSize uint64
 			restoredQueueSize, err = bytesToItemIndex(res)
 			pq.initQueueSize.Store(restoredQueueSize)
+			pq.logger.Debug("Restored queue size from storage", zap.Uint64("queue_size", restoredQueueSize))
 		}
 		if err != nil {
 			if errors.Is(err, errValueNotSet) {
@@ -186,17 +189,20 @@ func (pq *persistentQueue[T]) initPersistentContiguousStorage(ctx context.Contex
 // The call blocks until there is an item available or the queue is stopped.
 // The function returns true when an item is consumed or false if the queue is stopped.
 func (pq *persistentQueue[T]) Consume(consumeFunc func(context.Context, T) error) bool {
+	pq.logger.Debug("Consume started")
 	for {
 		// If we are stopped we still process all the other events in the channel before, but we
 		// return fast in the `getNextItem`, so we will free the channel fast and get to the stop.
 		_, ok := <-pq.putChan
 		if !ok {
+			pq.logger.Debug("Consume returned false")
 			return false
 		}
 
 		req, onProcessingFinished, consumed := pq.getNextItem(context.Background())
 		if consumed {
 			onProcessingFinished(consumeFunc(context.Background(), req))
+			pq.logger.Debug("Consume returned true")
 			return true
 		}
 	}
@@ -208,15 +214,18 @@ func (pq *persistentQueue[T]) Size() int {
 }
 
 func (pq *persistentQueue[T]) Shutdown(ctx context.Context) error {
+	pq.logger.Debug("Shutdown started")
 	close(pq.putChan)
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 	// Mark this queue as stopped, so consumer don't start any more work.
 	pq.stopped = true
-	return multierr.Combine(
+	errs := multierr.Combine(
 		pq.backupQueueSize(ctx),
 		pq.unrefClient(ctx),
 	)
+	pq.logger.Debug("Shutdown completed", zap.Error(errs))
+	return errs
 }
 
 // backupQueueSize writes the current queue size to storage. The value is used to recover the queue size
@@ -224,22 +233,31 @@ func (pq *persistentQueue[T]) Shutdown(ctx context.Context) error {
 func (pq *persistentQueue[T]) backupQueueSize(ctx context.Context) error {
 	// Client can be nil if the queue is not initialized yet.
 	if pq.client == nil {
+		pq.logger.Debug("backupQueueSize Not writing queue size to storage because storage client is not set")
 		return nil
 	}
 
 	// No need to write the queue size if the queue is sized by the number of requests.
 	// That information is already stored as difference between read and write indexes.
 	if pq.isRequestSized {
+		pq.logger.Debug("backupQueueSize Not writing queue size to storage because queue is request sized")
 		return nil
 	}
 
-	return pq.client.Set(ctx, queueSizeKey, itemIndexToBytes(uint64(pq.Size())))
+	queueSize := uint64(pq.Size())
+	err := pq.client.Set(ctx, queueSizeKey, itemIndexToBytes(queueSize))
+	if err != nil {
+		pq.logger.Debug("backupQueueSize Error writing queue size to storage", zap.Any("queue_size", queueSize), zap.Error(err))
+	} else {
+		pq.logger.Debug("backupQueueSize Wrote queue size to storage", zap.Any("queue_size", queueSize))
+	}
 }
 
 // unrefClient unrefs the client, and closes if no more references. Callers MUST hold the mutex.
 // This is needed because consumers of the queue may still process the requests while the queue is shutting down or immediately after.
 func (pq *persistentQueue[T]) unrefClient(ctx context.Context) error {
 	pq.refClient--
+	pq.logger.Debug("unrefClient decreased refClient", zap.Any("refClient", pq.refClient))
 	if pq.refClient == 0 {
 		return pq.client.Close(ctx)
 	}
@@ -257,6 +275,7 @@ func (pq *persistentQueue[T]) Offer(ctx context.Context, req T) error {
 
 // putInternal is the internal version that requires caller to hold the mutex lock.
 func (pq *persistentQueue[T]) putInternal(ctx context.Context, req T) error {
+	pq.logger.Debug("putInternal started")
 	if !pq.queueCapacityLimiter.claim(req) {
 		pq.logger.Warn("Maximum queue capacity reached")
 		return ErrQueueIsFull
@@ -278,8 +297,10 @@ func (pq *persistentQueue[T]) putInternal(ctx context.Context, req T) error {
 	}
 	if storageErr := pq.client.Batch(ctx, ops...); storageErr != nil {
 		pq.queueCapacityLimiter.release(req)
+		pq.logger.Debug("putInternal Failed to put item on queue", zap.Any("item_key", itemKey), zap.Error(storageErr))
 		return storageErr
 	}
+	pq.logger.Debug("putInternal Successfully put item on queue", zap.Any("item_key", itemKey), zap.Any("new_write_index", newIndex))
 
 	pq.writeIndex = newIndex
 	// Inform the loop that there's some data to process
@@ -299,23 +320,28 @@ func (pq *persistentQueue[T]) putInternal(ctx context.Context, req T) error {
 // getNextItem pulls the next available item from the persistent storage along with a callback function that should be
 // called after the item is processed to clean up the storage. If no new item is available, returns false.
 func (pq *persistentQueue[T]) getNextItem(ctx context.Context) (T, func(error), bool) {
+	pq.logger.Debug("getNextItem started")
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
 	var request T
 
 	if pq.stopped {
+		pq.logger.Debug("getNextItem queue is stopped, returning uninitialized request")
 		return request, nil, false
 	}
 
 	if pq.readIndex == pq.writeIndex {
+		pq.logger.Debug("getNextItem readIndex == writeIndex, returning uninitialized request", zap.Any("read_index", pq.readIndex), zap.Any("write_index", pq.writeIndex))
 		return request, nil, false
 	}
 
 	index := pq.readIndex
 	// Increase here, so even if errors happen below, it always iterates
 	pq.readIndex++
+	pq.logger.Debug("getNextItem Increased readIndex", zap.Any("read_index", pq.readIndex))
 	pq.currentlyDispatchedItems = append(pq.currentlyDispatchedItems, index)
+	pq.logger.Debug("getNextItem Added index to currently dispatched items", zap.Any("index", index), zap.Any("len_currentlyDispatchedItems", len(pq.currentlyDispatchedItems)))
 	getOp := storage.GetOperation(getItemKey(index))
 	err := pq.client.Batch(ctx,
 		storage.SetOperation(readIndexKey, itemIndexToBytes(pq.readIndex)),
@@ -323,14 +349,15 @@ func (pq *persistentQueue[T]) getNextItem(ctx context.Context) (T, func(error), 
 		getOp)
 
 	if err == nil {
+		pq.logger.Debug("getNextItem Successfully stored new readIndex, stored new dispatched items list, got current item")
 		request, err = pq.set.Unmarshaler(getOp.Value)
 	}
 
 	if err != nil {
-		pq.logger.Debug("Failed to dispatch item", zap.Error(err))
+		pq.logger.Debug("getNextItem Failed to set new readIndex, update dispatched items, get current item", zap.Error(err))
 		// We need to make sure that currently dispatched items list is cleaned
 		if err = pq.itemDispatchingFinish(ctx, index); err != nil {
-			pq.logger.Error("Error deleting item from queue", zap.Error(err))
+			pq.logger.Error("getNextItem Error deleting item from queue", zap.Error(err))
 		}
 
 		return request, nil, false
@@ -341,15 +368,18 @@ func (pq *persistentQueue[T]) getNextItem(ctx context.Context) (T, func(error), 
 	// Back up the queue size to storage on every 10 reads. The stored value is used to recover the queue size
 	// in case if the collector is killed. The recovered queue size is allowed to be inaccurate.
 	if (pq.writeIndex % 10) == 0 {
+		pq.logger.Debug("getNextItem Backing up queue size to storage")
 		if qsErr := pq.backupQueueSize(ctx); qsErr != nil {
-			pq.logger.Error("Error writing queue size to storage", zap.Error(err))
+			pq.logger.Error("getNextItem Error writing queue size to storage", zap.Error(err))
 		}
 	}
 
 	// Increase the reference count, so the client is not closed while the request is being processed.
 	// The client cannot be closed because we hold the lock since last we checked `stopped`.
 	pq.refClient++
+	pq.logger.Debug("getNextItem Increased refClient", zap.Any("refClient", pq.refClient))
 	return request, func(consumeErr error) {
+		pq.logger.Debug("onProcessingFinished started")
 		// Delete the item from the persistent storage after it was processed.
 		pq.mu.Lock()
 		// Always unref client even if the consumer is shutdown because we always ref it for every valid request.
@@ -363,12 +393,14 @@ func (pq *persistentQueue[T]) getNextItem(ctx context.Context) (T, func(error), 
 		if errors.As(consumeErr, &shutdownErr{}) {
 			// The queue is shutting down, don't mark the item as dispatched, so it's picked up again after restart.
 			// TODO: Handle partially delivered requests by updating their values in the storage.
+			pq.logger.Debug("onProcessingFinshed consumeErr is shutdownErr", zap.Error(consumeErr))
 			return
 		}
 
 		if err = pq.itemDispatchingFinish(ctx, index); err != nil {
-			pq.logger.Error("Error deleting item from queue", zap.Error(err))
+			pq.logger.Error("onProcessingFinshed Error deleting item from queue", zap.Error(err))
 		}
+		pq.logger.Debug("onProcessingFinshed completed", zap.Error(consumeErr))
 
 	}, true
 }
@@ -466,6 +498,7 @@ func (pq *persistentQueue[T]) retrieveAndEnqueueNotDispatchedReqs(ctx context.Co
 
 // itemDispatchingFinish removes the item from the list of currently dispatched items and deletes it from the persistent queue
 func (pq *persistentQueue[T]) itemDispatchingFinish(ctx context.Context, index uint64) error {
+	pq.logger.Debug("itemDispatchingFinish started")
 	lenCDI := len(pq.currentlyDispatchedItems)
 	for i := 0; i < lenCDI; i++ {
 		if pq.currentlyDispatchedItems[i] == index {
@@ -497,6 +530,7 @@ func (pq *persistentQueue[T]) itemDispatchingFinish(ctx context.Context, index u
 		return fmt.Errorf("failed updating currently dispatched items, but deleted item successfully: %w", err)
 	}
 
+	pq.logger.Debug("itemDispatchingFinish completed")
 	return nil
 }
 
