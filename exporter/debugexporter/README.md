@@ -72,10 +72,12 @@ For example, logs with multiline body will be output as multiple lines.
 Here's an example output:
 
 ```console
-2024-06-24T15:18:58.559+0200    info    TracesExporter  {"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 1, "spans": 2}
-2024-06-24T15:18:58.559+0200    info    okey-dokey-0 4bdc558f0f0650e3ccaac8f3ae133954 8b69459f015c164b net.peer.ip=1.2.3.4 peer.service=telemetrygen-client
-lets-go 4bdc558f0f0650e3ccaac8f3ae133954 8820ee5366817639 net.peer.ip=1.2.3.4 peer.service=telemetrygen-server
-        {"kind": "exporter", "data_type": "traces", "name": "debug"}
+2025-04-17T09:54:55.392+0200    info    Traces  {"otelcol.component.id": "debug", "otelcol.component.kind": "Exporter", "otelcol.signal": "traces", "resource spans": 1, "spans": 2}
+2025-04-17T09:54:55.392+0200    info    ResourceTraces #0 SchemaUrl=https://opentelemetry.io/schemas/1.25.0 service.name=telemetrygen
+ScopeTraces #0
+okey-dokey-0 9ae890f5d457c2fcf61f287a7cc06dfd d3a7be5a194f6190 net.sock.peer.addr=1.2.3.4 peer.service=telemetrygen-client
+lets-go 9ae890f5d457c2fcf61f287a7cc06dfd b98e3915ad705efd net.sock.peer.addr=1.2.3.4 peer.service=telemetrygen-server
+        {"otelcol.component.id": "debug", "otelcol.component.kind": "Exporter", "otelcol.signal": "traces"}
 ```
 
 ### Detailed verbosity
