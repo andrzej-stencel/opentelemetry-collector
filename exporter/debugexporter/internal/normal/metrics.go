@@ -26,8 +26,18 @@ func (normalMetricsMarshaler) MarshalMetrics(md pmetric.Metrics) ([]byte, error)
 	var buffer bytes.Buffer
 	for i := 0; i < md.ResourceMetrics().Len(); i++ {
 		resourceMetrics := md.ResourceMetrics().At(i)
+
+		resourceSchemaUrlString := writeSchemaUrlString(resourceMetrics.SchemaUrl())
+		resourceAttributesString := writeAttributesString(resourceMetrics.Resource().Attributes())
+		buffer.WriteString(fmt.Sprintf("ResourceMetrics #%d%s%s\n", i, resourceSchemaUrlString, resourceAttributesString))
+
 		for j := 0; j < resourceMetrics.ScopeMetrics().Len(); j++ {
 			scopeMetrics := resourceMetrics.ScopeMetrics().At(j)
+
+			scopeSchemaUrlString := writeSchemaUrlString(scopeMetrics.SchemaUrl())
+			scopeAttributesString := writeAttributesString(scopeMetrics.Scope().Attributes())
+			buffer.WriteString(fmt.Sprintf("ScopeMetrics #%d%s%s\n", i, scopeSchemaUrlString, scopeAttributesString))
+
 			for k := 0; k < scopeMetrics.Metrics().Len(); k++ {
 				metric := scopeMetrics.Metrics().At(k)
 

@@ -26,8 +26,18 @@ func (normalProfilesMarshaler) MarshalProfiles(pd pprofile.Profiles) ([]byte, er
 	var buffer bytes.Buffer
 	for i := 0; i < pd.ResourceProfiles().Len(); i++ {
 		resourceProfiles := pd.ResourceProfiles().At(i)
+
+		resourceSchemaUrlString := writeSchemaUrlString(resourceProfiles.SchemaUrl())
+		resourceAttributesString := writeAttributesString(resourceProfiles.Resource().Attributes())
+		buffer.WriteString(fmt.Sprintf("ResourceProfiles #%d%s%s\n", i, resourceSchemaUrlString, resourceAttributesString))
+
 		for j := 0; j < resourceProfiles.ScopeProfiles().Len(); j++ {
 			scopeProfiles := resourceProfiles.ScopeProfiles().At(j)
+
+			scopeSchemaUrlString := writeSchemaUrlString(scopeProfiles.SchemaUrl())
+			scopeAttributesString := writeAttributesString(scopeProfiles.Scope().Attributes())
+			buffer.WriteString(fmt.Sprintf("ScopeProfiles #%d%s%s\n", i, scopeSchemaUrlString, scopeAttributesString))
+
 			for k := 0; k < scopeProfiles.Profiles().Len(); k++ {
 				profile := scopeProfiles.Profiles().At(k)
 

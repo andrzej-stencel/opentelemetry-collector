@@ -25,8 +25,18 @@ func (normalLogsMarshaler) MarshalLogs(ld plog.Logs) ([]byte, error) {
 	var buffer bytes.Buffer
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
 		resourceLog := ld.ResourceLogs().At(i)
+
+		resourceSchemaUrlString := writeSchemaUrlString(resourceLog.SchemaUrl())
+		resourceAttributesString := writeAttributesString(resourceLog.Resource().Attributes())
+		buffer.WriteString(fmt.Sprintf("ResourceLog #%d%s%s\n", i, resourceSchemaUrlString, resourceAttributesString))
+
 		for j := 0; j < resourceLog.ScopeLogs().Len(); j++ {
 			scopeLog := resourceLog.ScopeLogs().At(j)
+
+			scopeSchemaUrlString := writeSchemaUrlString(scopeLog.SchemaUrl())
+			scopeAttributesString := writeAttributesString(scopeLog.Scope().Attributes())
+			buffer.WriteString(fmt.Sprintf("ScopeLog #%d%s%s\n", i, scopeSchemaUrlString, scopeAttributesString))
+
 			for k := 0; k < scopeLog.LogRecords().Len(); k++ {
 				logRecord := scopeLog.LogRecords().At(k)
 				logAttributes := writeAttributes(logRecord.Attributes())
