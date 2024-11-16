@@ -26,33 +26,15 @@ func (normalLogsMarshaler) MarshalLogs(ld plog.Logs) ([]byte, error) {
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
 		resourceLog := ld.ResourceLogs().At(i)
 
-		var schemaUrlString string
-		if len(resourceLog.SchemaUrl()) > 0 {
-			schemaUrlString = fmt.Sprintf(" SchemaUrl=%s", resourceLog.SchemaUrl())
-		}
-
-		resourceAttributes := writeAttributes(resourceLog.Resource().Attributes())
-		var resourceAttributesString string
-		if len(resourceAttributes) > 0 {
-			resourceAttributesString = fmt.Sprintf(" %s", strings.Join(resourceAttributes, " "))
-		}
-
+		schemaUrlString := writeSchemaUrlString(resourceLog.SchemaUrl())
+		resourceAttributesString := writeAttributesString(resourceLog.Resource().Attributes())
 		buffer.WriteString(fmt.Sprintf("ResourceLog #%d%s%s\n", i, schemaUrlString, resourceAttributesString))
 
 		for j := 0; j < resourceLog.ScopeLogs().Len(); j++ {
 			scopeLog := resourceLog.ScopeLogs().At(j)
 
-			var scopeSchemaUrlString string
-			if len(scopeLog.SchemaUrl()) > 0 {
-				scopeSchemaUrlString = fmt.Sprintf(" SchemaUrl=%s", scopeLog.SchemaUrl())
-			}
-
-			scopeAttributes := writeAttributes(scopeLog.Scope().Attributes())
-			var scopeAttributesString string
-			if len(scopeAttributes) > 0 {
-				scopeAttributesString = fmt.Sprintf(" %s", strings.Join(scopeAttributes, " "))
-			}
-
+			scopeSchemaUrlString := writeSchemaUrlString(scopeLog.SchemaUrl())
+			scopeAttributesString := writeAttributesString(scopeLog.Scope().Attributes())
 			buffer.WriteString(fmt.Sprintf("ScopeLog #%d%s%s\n", i, scopeSchemaUrlString, scopeAttributesString))
 
 			for k := 0; k < scopeLog.LogRecords().Len(); k++ {
