@@ -39,6 +39,31 @@ func TestMarshalMetrics(t *testing.T) {
 `,
 		},
 		{
+			name: "data point with resource and scope attributes",
+			input: func() pmetric.Metrics {
+				metrics := pmetric.NewMetrics()
+				resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+				resourceMetrics.SetSchemaUrl("https://opentelemetry.io/resource-schema-url")
+				resourceMetrics.Resource().Attributes().PutStr("resourceKey1", "resourceValue1")
+				resourceMetrics.Resource().Attributes().PutBool("resourceKey2", false)
+				scopeMetrics := resourceMetrics.ScopeMetrics().AppendEmpty()
+				scopeMetrics.SetSchemaUrl("http://opentelemetry.io/scope-schema-url")
+				scopeMetrics.Scope().Attributes().PutStr("scopeKey1", "scopeValue1")
+				scopeMetrics.Scope().Attributes().PutBool("scopeKey2", true)
+				metric := scopeMetrics.Metrics().AppendEmpty()
+				metric.SetName("system.cpu.time")
+				dataPoint := metric.SetEmptySum().DataPoints().AppendEmpty()
+				dataPoint.SetDoubleValue(123.456)
+				dataPoint.Attributes().PutStr("state", "user")
+				dataPoint.Attributes().PutStr("cpu", "0")
+				return metrics
+			}(),
+			expected: `ResourceMetrics #0 SchemaUrl=https://opentelemetry.io/resource-schema-url resourceKey1=resourceValue1 resourceKey2=false
+ScopeMetrics #0 SchemaUrl=http://opentelemetry.io/scope-schema-url scopeKey1=scopeValue1 scopeKey2=true
+system.cpu.time{state=user,cpu=0} 123.456
+`,
+		},
+		{
 			name: "gauge data point",
 			input: func() pmetric.Metrics {
 				metrics := pmetric.NewMetrics()
